@@ -62,7 +62,7 @@ npm run web
 
 La instancia compartida fue actualizada el **28/10/2026**, con respaldo previo y preservación verificada de 27 pedidos, 173 clientes y 14 artículos. La APK **1.6.0**, `versionCode: 8`, conserva paquete y firma para actualizar sin desinstalar: `artifacts/kalak-logistica-1.6.0.apk`. Se aplicaron las migraciones de medio previsto, producción futura y bolsas de primera compra/edición. En ese despliegue la cuenta Mendieta quedó como responsable; el **29/10/2026 se promovió a administrador** con acceso general, sin cambiar datos de negocio. Las instrucciones siguientes sirven para otras instalaciones o futuros despliegues; no repetir el bootstrap de esta instancia.
 
-APK actual **1.8.0**, `versionCode: 11`: [descargar APK firmado](artifacts/kalak-logistica-1.8.0.apk). Conserva paquete y certificado para actualizar sin desinstalar. Requiere las migraciones `20261030120000_pet_profiles.sql` y `20261030130000_weekend_pickup_availability.sql`. Las APK anteriores se eliminan al entregar esta versión, a pedido del usuario.
+APK actual **1.8.0**, `versionCode: 11`: [descargar APK firmado](https://github.com/MorguiMateo/pedidos-stock/releases/download/v1.8.0/kalak-logistica-1.8.0.apk). Conserva paquete y certificado para actualizar sin desinstalar. Requiere las migraciones `20261030120000_pet_profiles.sql` y `20261030130000_weekend_pickup_availability.sql`. Las APK anteriores se eliminan al entregar esta versión, a pedido del usuario.
 
 Las versiones históricas 1.6.0, 1.6.1 y 1.7.0 conservan su registro de verificación en `artifacts/evidence/`, pero sus APK ya no se distribuyen.
 
