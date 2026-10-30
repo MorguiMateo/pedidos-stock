@@ -2,6 +2,8 @@
 
 Aplicación Android/web en español para cargar pedidos directamente, sin depender de Nooty. React Native + Expo + Supabase; importes ARS y día comercial de Mendoza.
 
+**Código fuente privado:** [MorguiMateo/pedidos-stock](https://github.com/MorguiMateo/pedidos-stock). Rama principal: `main`. La plantilla `.github/ci.example.yml` prepara verificaciones de TypeScript, pruebas compartidas/web y build web. Para activarla debe moverse a `.github/workflows/ci.yml` usando una sesión GitHub con permiso `workflow`; la sesión actual permite subir el código, pero no activar workflows. Las pruebas SQL necesitan Docker y se ejecutan por separado. Los secretos, respaldos, APK y claves de firma quedan fuera de Git.
+
 ## Esta versión
 
 - Versión **1.8.0**: inicio reorganizado, productos abreviados en vertical (FP/FG/CC/VIN/SEM/K/BOL), acciones compactas de entrega/cobro con transferencia predeterminada y confirmación de cambios de medio. Alta completa de cliente desde el pedido, punto habitual y repetición del último pedido. Mascotas con anotaciones, foto JPEG y edad fechada/actualizada. Reglas semanales de retiros con excepciones manuales, no retirados desde las 20:45 de Mendoza y análisis mensual financiero con calendario, clientes únicos, ticket, productos por punto, gráficos, pronóstico y simulador de equilibrio.
