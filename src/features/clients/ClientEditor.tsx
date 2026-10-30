@@ -1,6 +1,8 @@
 import React, { useRef, useState } from 'react';
 import { Image, View } from 'react-native';
-import { Button, Chip, IconButton, Text, TextInput } from 'react-native-paper';
+import { Button, IconButton, Text, TextInput } from 'react-native-paper';
+import { COLORS } from '../../lib/theme';
+import { Chip } from '../../components/ui';
 import * as ImagePicker from 'expo-image-picker';
 import * as ImageManipulator from 'expo-image-manipulator';
 import { duplicatePhoneClients } from '../../lib/clientHistory';
@@ -52,14 +54,14 @@ export function ClientEditor({ client, initialName = '', initialPhone = '', onSa
   }
   return <Form visible title={draft?.id ? 'Editar cliente' : 'Nuevo cliente'} onDismiss={onCancel} onSave={() => void save()} saving={busy || ws.isSaving || uploading} disabled={!available} error={error}>
       {draft ? <>
-        <TextInput mode="outlined" accessibilityLabel="Nombre del cliente" label="Nombre del cliente" value={draft.name} onChangeText={name => setDraft({ ...draft, name })} />
-        <TextInput mode="outlined" accessibilityLabel="Teléfono" label="Teléfono" keyboardType="phone-pad" value={draft.phone} onChangeText={phone => setDraft({ ...draft, phone })} />
+        <TextInput mode="outlined" style={{ backgroundColor: COLORS.surface }} accessibilityLabel="Nombre del cliente" label="Nombre del cliente" value={draft.name} onChangeText={name => setDraft({ ...draft, name })} />
+        <TextInput mode="outlined" style={{ backgroundColor: COLORS.surface }} accessibilityLabel="Teléfono" label="Teléfono" keyboardType="phone-pad" value={draft.phone} onChangeText={phone => setDraft({ ...draft, phone })} />
         {duplicates.length ? <View style={styles.lineCard}>
           <Text style={styles.muted}>Teléfono ya registrado: {duplicates.map(client => client.name).join(', ')}. Revisá estos contactos antes de crear otro.</Text>
           {duplicates.map(client => <Button key={client.id} icon="account-search-outline" onPress={() => edit(client)}>Usar ficha de {client.name}</Button>)}
         </View> : null}
-        <TextInput mode="outlined" accessibilityLabel="Correo electrónico" label="Correo electrónico" keyboardType="email-address" autoCapitalize="none" value={draft.email} onChangeText={email => setDraft({ ...draft, email })} />
-        <TextInput mode="outlined" accessibilityLabel="Domicilio" label="Domicilio" value={draft.address} onChangeText={address => setDraft({ ...draft, address })} />
+        <TextInput mode="outlined" style={{ backgroundColor: COLORS.surface }} accessibilityLabel="Correo electrónico" label="Correo electrónico" keyboardType="email-address" autoCapitalize="none" value={draft.email} onChangeText={email => setDraft({ ...draft, email })} />
+        <TextInput mode="outlined" style={{ backgroundColor: COLORS.surface }} accessibilityLabel="Domicilio" label="Domicilio" value={draft.address} onChangeText={address => setDraft({ ...draft, address })} />
         <View>
           <Text style={styles.label}>Punto de retiro habitual</Text>
           <View style={styles.wrap}>
@@ -68,7 +70,7 @@ export function ClientEditor({ client, initialName = '', initialPhone = '', onSa
           </View>
           {draft.preferred_location_id && !pickupLocations.some(location => location.id === draft.preferred_location_id) ? <Text style={styles.muted}>Preferencia guardada: {ws.data?.locations.find(location => location.id === draft.preferred_location_id)?.name ?? 'Punto no disponible'} (no disponible para nuevos pedidos). Podés conservarla o elegir otra.</Text> : null}
         </View>
-        <TextInput mode="outlined" accessibilityLabel="Notas" label="Notas" multiline value={draft.notes} onChangeText={notes => setDraft({ ...draft, notes })} />
+        <TextInput mode="outlined" style={{ backgroundColor: COLORS.surface }} accessibilityLabel="Notas" label="Notas" multiline value={draft.notes} onChangeText={notes => setDraft({ ...draft, notes })} />
         <View style={[styles.row, { justifyContent: 'space-between' }]}>
           <Text style={styles.label}>Mascotas</Text>
           <Button icon="plus" onPress={() => setDraft(current => ({ ...current, pets: [...current.pets, { name: '', species: 'perro', weight_kg: '', diet: '', notes: '', age_years: '' }] }))}>Agregar mascota</Button>
@@ -84,15 +86,15 @@ export function ClientEditor({ client, initialName = '', initialPhone = '', onSa
             <Chip selected={pet.species === 'gato'} accessibilityLabel={`Mascota ${index + 1}: gato`} onPress={() => setPet(index, 'species', 'gato')}>🐱 Gato</Chip>
           </View>
           {!pet.species ? <Text style={styles.muted}>Especie sin registrar. Elegí perro o gato para completarla.</Text> : null}
-          <TextInput mode="outlined" accessibilityLabel="Nombre" label="Nombre" value={pet.name} onChangeText={value => setPet(index, 'name', value)} />
-          <TextInput mode="outlined" accessibilityLabel="Peso en kg (opcional)" label="Peso en kg (opcional)" keyboardType="decimal-pad" value={pet.weight_kg} onChangeText={value => setPet(index, 'weight_kg', value)} />
+          <TextInput mode="outlined" style={{ backgroundColor: COLORS.surface }} accessibilityLabel="Nombre" label="Nombre" value={pet.name} onChangeText={value => setPet(index, 'name', value)} />
+          <TextInput mode="outlined" style={{ backgroundColor: COLORS.surface }} accessibilityLabel="Peso en kg (opcional)" label="Peso en kg (opcional)" keyboardType="decimal-pad" value={pet.weight_kg} onChangeText={value => setPet(index, 'weight_kg', value)} />
 
-          <TextInput mode="outlined" accessibilityLabel={`Edad en años de mascota ${index + 1} (opcional)`} label="Edad en años (opcional)" keyboardType="decimal-pad" value={pet.age_years} onChangeText={value => setPet(index, 'age_years', value)} />
+          <TextInput mode="outlined" style={{ backgroundColor: COLORS.surface }} accessibilityLabel={`Edad en años de mascota ${index + 1} (opcional)`} label="Edad en años (opcional)" keyboardType="decimal-pad" value={pet.age_years} onChangeText={value => setPet(index, 'age_years', value)} />
           {pet.age_recorded_on ? <Text style={styles.muted}>{petAgeLabel(pet)}</Text> : <Text style={styles.muted}>La fecha de referencia se registra al guardar la edad. Podés usar decimales (0,5 = 6 meses).</Text>}
-          <TextInput mode="outlined" accessibilityLabel={`Anotaciones de mascota ${index + 1} (opcional)`} label="Anotaciones (opcional)" multiline value={pet.notes} onChangeText={value => setPet(index, 'notes', value)} />
+          <TextInput mode="outlined" style={{ backgroundColor: COLORS.surface }} accessibilityLabel={`Anotaciones de mascota ${index + 1} (opcional)`} label="Anotaciones (opcional)" multiline value={pet.notes} onChangeText={value => setPet(index, 'notes', value)} />
           {pet.photo_data_url ? <><Image source={{ uri: pet.photo_data_url }} accessibilityLabel={`Foto de ${pet.name || 'mascota'}`} style={{ width: 120, height: 120, borderRadius: 12 }} /><Button onPress={() => setPet(index, 'photo_data_url', undefined)}>Quitar foto</Button></> : null}
           <Button disabled={busy || uploading} icon="image-plus" onPress={() => void choosePhoto(index)}>{uploading ? 'Procesando foto…' : pet.photo_data_url ? 'Cambiar foto' : 'Agregar foto (opcional)'}</Button>
-          <TextInput mode="outlined" accessibilityLabel="Dieta" label="Dieta" multiline value={pet.diet} onChangeText={value => setPet(index, 'diet', value)} />
+          <TextInput mode="outlined" style={{ backgroundColor: COLORS.surface }} accessibilityLabel="Dieta" label="Dieta" multiline value={pet.diet} onChangeText={value => setPet(index, 'diet', value)} />
         </View>)}
       </> : null}
     </Form>;

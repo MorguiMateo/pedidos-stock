@@ -77,7 +77,7 @@ export default function StockScreen() {
         const low = free.lte(item.minimum);
         return <View key={item.id} style={s.line}><Text style={s.smallTitle}>{item.name}{!item.active ? ' · Inactivo' : ''}</Text>
           <Text style={s.caption}>{item.presentation || 'Sin presentación configurada'}{item.package_size ? ` · ${qty(item.package_size)} ${item.unit} por envase` : ''}</Text>
-          <View style={s.wrap}><Text>Físico: {qty(row.on_hand)} {item.unit}</Text><Text>Reservado: {qty(row.reserved)} {item.unit}</Text><Text style={low ? s.danger : undefined}>Disponible: {qty(free.toString())} {item.unit}</Text></View>
+          <View style={s.wrap}><Text style={s.stat}>Físico: {qty(row.on_hand)} {item.unit}</Text><Text style={s.stat}>Reservado: {qty(row.reserved)} {item.unit}</Text><Text style={[s.stat, low ? s.statLow : s.statOk]}>Disponible: {qty(free.toString())} {item.unit}</Text></View>
           <Text style={s.caption}>Mínimo: {qty(item.minimum)} {item.unit}{d(row.shortage).gt(0) ? ` · Faltan ${qty(row.shortage)} ${item.unit} para completar pedidos` : ''}</Text>
           {low ? <Note error>{free.lte(0) ? 'Sin disponibilidad para nuevos pedidos.' : 'Este producto alcanzó el stock mínimo.'}</Note> : null}
           {admin ? <View style={s.wrap}><Button disabled={!writable} onPress={() => open('adjust', item)}>Ajustar</Button><Button disabled={!writable || !item.active} onPress={() => open('transfer', item)}>Transferir</Button></View> : null}

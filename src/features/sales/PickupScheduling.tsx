@@ -6,6 +6,7 @@ import { pickupLocations, shiftCalendarDate } from '../../lib/calendar';
 import { pendingPickups, pickupClosure } from '../../lib/pickupScheduling';
 import type { Location, Order } from '../../lib/types';
 import { useWorkspace } from '../../lib/workspace';
+import { COLORS } from '../../lib/theme';
 import { calendarTheme, Confirm, currency, dateLabel, errorText, Form, Notice, Panel, styles, validDate } from './components';
 
 export function RescheduleOrderButton({ order, onRescheduled }: { order: Order; onRescheduled?: (date: string) => void }) {
@@ -73,7 +74,7 @@ function PickupLocationDay({ day, location }: { day: string; location: Location 
       setSuccess(`${location.name} · ${dateLabel(day)}: ${closed ? 'retiros cancelados' : 'retiros habilitados'}.`);
     } catch (e) { setError(errorText(e)); } finally { setBusy(false); }
   };
-  return <View style={[styles.lineCard, { borderLeftWidth: 5, borderLeftColor: location.color }]}>
+  return <View style={[styles.lineCard, { borderWidth: 1, borderColor: `${location.color}40` }]}>
     <View style={[styles.row, { justifyContent: 'space-between', flexWrap: 'wrap' }]}>
       <Text variant="titleSmall" style={{ flex: 1, color: location.color, fontWeight: '700' }}>{location.name}</Text>
       {closure ? <Button icon="calendar-check-outline" disabled={disabled} loading={busy} onPress={() => void setClosed(false)}>Habilitar retiros</Button> : <Button icon="calendar-remove-outline" disabled={disabled} onPress={() => { setEditing(!editing); setError(''); setSuccess(''); }}>{editing ? 'Volver' : 'Cancelar retiros'}</Button>}
@@ -81,7 +82,7 @@ function PickupLocationDay({ day, location }: { day: string; location: Location 
     {closure ? <Notice error>{location.name} · {dateLabel(day)} · Sin retiros: {closure.reason || 'Día cerrado.'}</Notice> : null}
     {editing && !closure ? <>
       <Text style={styles.muted}>Cancelar los retiros de {location.name} el {dateLabel(day)} no elimina ni cancela pedidos.</Text>
-      <TextInput mode="outlined" label="Motivo del cierre (opcional)" accessibilityLabel={`Motivo del cierre de ${location.name}`} value={reason} onChangeText={setReason} disabled={disabled} multiline />
+      <TextInput mode="outlined" style={{ backgroundColor: COLORS.surface }} label="Motivo del cierre (opcional)" accessibilityLabel={`Motivo del cierre de ${location.name}`} value={reason} onChangeText={setReason} disabled={disabled} multiline />
       {pending.length ? <>
         <Notice error>Hay {pending.length} {pending.length === 1 ? 'pedido pendiente' : 'pedidos pendientes'} en {location.name} el {dateLabel(day)}. Cambiá su día de retiro para poder cerrar.</Notice>
         {pending.map(order => <View key={order.id} style={{ gap: 4 }}>
@@ -89,7 +90,7 @@ function PickupLocationDay({ day, location }: { day: string; location: Location 
           <RescheduleOrderButton order={order} />
         </View>)}
       </> : <Text style={styles.muted}>No hay pedidos pendientes. Ya podés cerrar este día.</Text>}
-      <Button mode="contained" icon="calendar-remove-outline" disabled={disabled || pending.length > 0} loading={busy} onPress={() => void setClosed(true)}>Confirmar cierre de retiros</Button>
+      <Button mode="contained" buttonColor={COLORS.primary} textColor={COLORS.ink} contentStyle={{ minHeight: 48 }} icon="calendar-remove-outline" disabled={disabled || pending.length > 0} loading={busy} onPress={() => void setClosed(true)}>Confirmar cierre de retiros</Button>
     </> : null}
     {error ? <Notice error>{error}</Notice> : null}
     {success ? <Notice>{success}</Notice> : null}

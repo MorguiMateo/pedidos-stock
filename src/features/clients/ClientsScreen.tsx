@@ -2,7 +2,8 @@ import { ClientEditor } from './ClientEditor';
 import { petAgeLabel } from './clientForm';
 import React, { useMemo, useState } from 'react';
 import { Image, View } from 'react-native';
-import { Button, Chip, IconButton, Text, TextInput } from 'react-native-paper';
+import { Button, IconButton, Text, TextInput } from 'react-native-paper';
+import { Chip } from '../../components/ui';
 import { Calendar } from 'react-native-calendars';
 import Decimal from '../../lib/decimal';
 import { COLORS } from '../../lib/theme';
@@ -29,8 +30,8 @@ export default function ClientsScreen() {
   const activity = useMemo(() => ws.data ? customerActivity(ws.data, month, dateNow()) : [], [ws.data, month]);
   const edit = (client: Client) => setDraft(client);
   return <Page eyebrow="CLIENTES" title="Cada cliente, su historia." subtitle="Contactos, mascotas y consumo mensual en un solo lugar." action={<Button mode="contained" buttonColor={COLORS.primary} textColor={COLORS.ink} contentStyle={{ minHeight: 48 }} icon="account-plus-outline" disabled={disabled} onPress={() => { setDraft('new'); }}>Nuevo cliente</Button>}>
-    <TextInput mode="outlined" accessibilityLabel="Buscar por cliente, contacto o mascota" label="Buscar por cliente, contacto o mascota" left={<TextInput.Icon icon="magnify" />} value={search} onChangeText={setSearch} />
-    <Panel><View style={[styles.row, { justifyContent: 'space-between', flexWrap: 'wrap' }]}><Text variant="titleMedium">Resumen mensual</Text><Button icon="calendar-month-outline" onPress={() => setMonthPicker(!monthPicker)}>{monthLabel(month)}</Button></View>{monthPicker ? <Calendar current={`${month}-01`} firstDay={1} theme={calendarTheme} onMonthChange={value => setMonth(value.dateString.slice(0, 7))} onDayPress={value => { setMonth(value.dateString.slice(0, 7)); setMonthPicker(false); }} /> : null}<Text style={styles.muted}>Pedidos por fecha de retiro, sin cancelados. El consumo incluye solo entregados y utiliza el precio histórico de cada línea, no el precio actual del catálogo.</Text></Panel>
+    <TextInput mode="outlined" style={{ backgroundColor: COLORS.surface }} accessibilityLabel="Buscar por cliente, contacto o mascota" label="Buscar por cliente, contacto o mascota" left={<TextInput.Icon icon="magnify" />} value={search} onChangeText={setSearch} />
+    <Panel><View style={[styles.row, { justifyContent: 'space-between', flexWrap: 'wrap' }]}><Text variant="titleMedium" accessibilityRole="header" style={{ textTransform: 'uppercase' }}>Resumen mensual</Text><Button icon="calendar-month-outline" onPress={() => setMonthPicker(!monthPicker)}>{monthLabel(month)}</Button></View>{monthPicker ? <Calendar current={`${month}-01`} firstDay={1} theme={calendarTheme} onMonthChange={value => setMonth(value.dateString.slice(0, 7))} onDayPress={value => { setMonth(value.dateString.slice(0, 7)); setMonthPicker(false); }} /> : null}<Text style={styles.muted}>Pedidos por fecha de retiro, sin cancelados. El consumo incluye solo entregados y utiliza el precio histórico de cada línea, no el precio actual del catálogo.</Text></Panel>
     {clients.length ? clients.map(client => {
       const report = ws.data ? monthlyClientReport(ws.data, client.id, month) : null;
       const history = ws.data ? clientHistory(ws.data, client.id, month) : null;
