@@ -1,0 +1,28 @@
+# Deploy only the React web app and its shared source/assets.
+.env
+.env.*
+**/.env
+**/.env.*
+**/node_modules
+**/dist
+**/.DS_Store
+.git
+.expo
+.vercel
+android
+ios
+artifacts
+app
+plugins
+supabase
+scripts
+docs
+# Web also imports pure form helpers from src/features/clients.
+src/components
+**/*.test.ts
+**/*.test.tsx
+web/src/App.test.tsx
+**/*.jks
+**/*.keystore
+**/*.log
+**/coverage

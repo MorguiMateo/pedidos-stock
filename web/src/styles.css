@@ -1,0 +1,45 @@
+@import "tailwindcss";
+
+@font-face { font-family: Inter; src: url('../../assets/fonts/Inter-Regular.ttf') format('truetype'); font-weight: 400; font-display: swap; }
+@font-face { font-family: Inter; src: url('../../assets/fonts/Inter-Medium.ttf') format('truetype'); font-weight: 500; font-display: swap; }
+@font-face { font-family: Inter; src: url('../../assets/fonts/Inter-SemiBold.ttf') format('truetype'); font-weight: 600; font-display: swap; }
+@font-face { font-family: Inter; src: url('../../assets/fonts/Inter-Bold.ttf') format('truetype'); font-weight: 700 900; font-display: swap; }
+@font-face { font-family: Oswald; src: url('../../assets/fonts/Oswald-SemiBold.ttf') format('truetype'); font-weight: 600; font-display: swap; }
+
+@theme { --font-sans: Inter, system-ui, sans-serif; --font-display: Oswald, sans-serif; --color-kalak: #b74712; --color-cream: #faf7f0; }
+
+@layer base {
+  :root { font-family: Inter, system-ui, sans-serif; color: #20221d; background: #faf7f0; font-synthesis: none; }
+  body { margin: 0; min-width: 320px; }
+  button, a, input, select, textarea { -webkit-tap-highlight-color: transparent; }
+  button:not(:disabled), select:not(:disabled), summary { cursor: pointer; }
+  button:disabled { cursor: not-allowed; opacity: .5; }
+  :focus-visible { outline: 3px solid #ef792c; outline-offset: 3px; }
+  input:not([type='checkbox']):not([type='radio']):not([type='color']), select, textarea {
+    min-height: 42px; border: 1px solid #dcd6c8; background: #fff; border-radius: 9px; padding: 9px 12px; color: #20221d; font-size: 13px; max-width: 100%;
+  }
+  input:disabled, select:disabled, textarea:disabled { background: #f5f3ee; color: #78716c; }
+  input[type='checkbox'], input[type='radio'] { accent-color: #b74712; width: 16px; height: 16px; }
+  input[type='color'] { height: 42px; width: 64px; border: 1px solid #dcd6c8; border-radius: 8px; padding: 4px; background: white; }
+  textarea { min-height: 80px; resize: vertical; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; text-align: left; }
+  th { background: #faf7f0; color: #626156; font-weight: 600; }
+  th, td { padding: 12px 14px; border-bottom: 1px solid #eee8dc; }
+  td { vertical-align: top; }
+  summary { min-height: 40px; }
+  ::selection { background: #ffdec5; }
+}
+
+@layer components {
+  .btn-primary { @apply inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-orange-800 bg-[#b74712] px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#98390e] disabled:hover:bg-[#b74712]; }
+  .btn-secondary { @apply inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-[#e4dcc8] bg-white px-4 py-2.5 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50; }
+  .btn-icon { @apply inline-flex min-h-10 min-w-10 items-center justify-center rounded-lg hover:bg-stone-100; }
+  .field { @apply grid gap-2 text-xs font-semibold text-stone-600; }
+  .notice { @apply rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm leading-6 text-blue-900; }
+  .notice.warning { @apply border-amber-200 bg-amber-50 text-amber-900; }
+  .notice.error { @apply border-red-200 bg-red-50 text-red-800; }
+  .notice.success { @apply border-green-200 bg-green-50 text-green-800; }
+  .panel { @apply rounded-2xl border border-[#e4dcc8] bg-white p-5 sm:p-6; }
+}
+
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; scroll-behavior: auto !important; } }

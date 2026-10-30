@@ -1,0 +1,53 @@
+begin;
+create extension if not exists pgtap with schema extensions;
+set search_path=public,extensions;
+select to_regclass('public.app_members') is null as missing_kalak \gset
+\if :missing_kalak
+select '1..0 # SKIP Apply additive KALAK migration to this database, or run node scripts/test-kalak-backend.mjs for isolated current-schema verification';
+rollback;
+\quit
+\endif
+select no_plan();
+insert into auth.users(id,email) values('a0000000-0000-4000-8000-000000000001','kalak-admin-test@invalid.test'),('a0000000-0000-4000-8000-000000000002','kalak-local-test@invalid.test'),('a0000000-0000-4000-8000-000000000003','kalak-pending-test@invalid.test');
+insert into public.app_members(id,role,display_name,location_id) values('a0000000-0000-4000-8000-000000000001','admin','Test admin',null),('a0000000-0000-4000-8000-000000000002','responsable','Test pickup','mendieta');
+set local request.jwt.claim.sub='a0000000-0000-4000-8000-000000000001';
+create function pg_temp.cmd(op text,p jsonb,v integer default null) returns uuid language sql as $$select (app_command(gen_random_uuid(),op,p,v)->>'id')::uuid$$;
+create temporary table fixture(key text primary key,id uuid);
+insert into fixture values('product',pg_temp.cmd('save_item','{"kind":"product","name":"KALAK kg test","unit":"kg","price":"100","minimum":"0","active":true,"package_size":"0.5"}'));
+insert into fixture values('client',pg_temp.cmd('save_client','{"name":"KALAK client test","phone":"+54 (261) 882-1199"}'));
+select ok(not has_function_privilege('anon','public.app_snapshot()','execute'),'anonymous snapshot access revoked');
+select ok(not has_function_privilege('anon','public.app_command(uuid,text,jsonb,integer)','execute'),'anonymous mutations revoked');
+select ok(not has_table_privilege('authenticated','public.orders','select'),'direct operational access revoked');
+select ok(not has_function_privilege('authenticated','public.app_bootstrap_admin(uuid,text)','execute'),'bootstrap restricted to service role');
+select ok(not has_function_privilege('authenticated','app_private.auth_directory()','execute'),'private Auth directory cannot be enumerated by app clients');
+select ok(not has_function_privilege('anon','app_private.actor_id()','execute'),'JWT actor helper is not a public RPC');
+select is(app_snapshot()->'profile'->>'role','admin','authenticated actor profile returned');
+select ok(exists(select 1 from jsonb_array_elements(app_snapshot()->'members') m where m->>'id'='a0000000-0000-4000-8000-000000000003' and m->'role'='null'::jsonb),'pending individual Auth accounts visible only to administration');
+select throws_ok($$select pg_temp.cmd('save_client','{"name":"duplicate","phone":"542618821199"}')$$,'P0001','DUPLICATE_PHONE: ya existe un cliente con este teléfono','normalized duplicate phone prevented');
+do $$begin perform pg_temp.cmd('adjust_stock',jsonb_build_object('item_id',(select id from fixture where key='product'),'location_id','mendieta','quantity','5.5','reason','KALAK test'));end$$;
+create function pg_temp.payload(kind text,q text,pickup date) returns jsonb language sql as $$select jsonb_build_object('client_id',case when kind='pedido' then (select id from fixture where key='client') else null end,'sale_kind',kind,'pickup_date',pickup,'location_id','mendieta','payment_method','efectivo','payment_status','no_pagado','lines',jsonb_build_array(jsonb_build_object('product_id',(select id from fixture where key='product'),'quantity',q)))$$;
+insert into fixture values('future',pg_temp.cmd('save_order',pg_temp.payload('pedido','4',current_date+10)));
+select throws_ok($$select pg_temp.cmd('save_order',pg_temp.payload('espontanea','2',current_date))$$,'P0001','INSUFFICIENT_STOCK: venta inmediata supera stock libre','immediate sale respects future reservations');
+insert into fixture values('sale',pg_temp.cmd('save_order',pg_temp.payload('espontanea','1.5','2000-01-01')));
+select is((select pickup_date from public.orders where id=(select id from fixture where key='sale')),(now() at time zone 'America/Argentina/Mendoza')::date,'immediate sale uses real local today');
+select is((select status from public.orders where id=(select id from fixture where key='sale')),'entregado','immediate sale delivered atomically');
+select is((select reserved from public.order_lines where order_id=(select id from fixture where key='sale')),0::numeric,'immediate sale has no reservation');
+select is((select app_private.balance(id,'mendieta') from fixture where key='product'),4::numeric,'fractional commercial stock deducted once');
+select throws_ok($$select pg_temp.cmd('save_order',pg_temp.payload('pedido','0.25',(now() at time zone 'America/Argentina/Mendoza')::date))$$,'P0001','STOCK_CONFIRMATION_REQUIRED: stock insuficiente; confirmar pedido con faltante','same-day reservation requires explicit shortage override');
+insert into fixture values('shortage',pg_temp.cmd('save_order',pg_temp.payload('pedido','0.25',(now() at time zone 'America/Argentina/Mendoza')::date)||'{"allow_stock_shortage":true}'::jsonb));
+select is((select quantity from public.order_lines where order_id=(select id from fixture where key='shortage')),0.25::numeric,'confirmed same-day kg quantity preserved');
+select throws_ok($$select pg_temp.cmd('record_payment',jsonb_build_object('order_id',(select id from fixture where key='shortage'),'amount','1','method','efectivo'),1)$$,'P0001','VALIDATION_ERROR: cobrar el saldo completo; pagos parciales deshabilitados','new partial payments rejected');
+do $$begin perform pg_temp.cmd('record_payment',jsonb_build_object('order_id',(select id from fixture where key='shortage'),'amount','25','method','efectivo'),1);end$$;
+select ok((select payment_confirmed_at is not null and delivered_at is null and payment_confirmed_by=auth.uid() from public.orders where id=(select id from fixture where key='shortage')),'payment confirmation independent from delivery');
+select ok(exists(select 1 from public.audit_events where entity_id=(select id::text from fixture where key='shortage') and after_data->'lines' is not null and after_data->>'order_id'=entity_id),'human-reviewable order history records after snapshot and lines');
+select ok((select bool_and(actor_id=auth.uid()::text) from public.audit_events where entity_id in(select id::text from fixture)),'audit actor comes from authenticated user');
+set local request.jwt.claim.sub='a0000000-0000-4000-8000-000000000002';
+select is(app_snapshot()->'profile'->>'location_id','mendieta','pickup actor scoped profile');
+select ok(not (app_snapshot() ? 'members'),'pickup actor cannot enumerate Auth accounts');
+select ok(jsonb_array_length(app_snapshot()->'audit_events')>0,'pickup actor can consult own point order history');
+select throws_ok($$select pg_temp.cmd('save_item','{"kind":"product","name":"unauthorized","unit":"unidad","price":"1","minimum":"0","active":true}')$$,'P0001','FORBIDDEN: operación reservada a administración','pickup cannot mutate catalog');
+select throws_ok($$select app_export()$$,'P0001','FORBIDDEN: exportación solo administración','pickup cannot export full workspace');
+set local request.jwt.claim.sub='a0000000-0000-4000-8000-000000000003';
+select throws_ok($$select app_snapshot()$$,'P0001','FORBIDDEN: usuario sin acceso asignado','pending identity cannot read any operational data');
+select * from finish();
+rollback;

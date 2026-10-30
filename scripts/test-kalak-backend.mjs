@@ -1,0 +1,201 @@
+/** Isolated, local-only fresh install + non-empty additive upgrade. Never resets app DB. */
+import assert from 'node:assert/strict';
+import { execFileSync, execFile } from 'node:child_process';
+import { readFileSync, readdirSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+process.chdir(new URL('../', import.meta.url).pathname);
+const project=readFileSync('supabase/config.toml','utf8').match(/^project_id = "([a-zA-Z0-9_-]+)"/m)[1];
+const container=`supabase_db_${project}`, database=`kalak_test_${randomUUID().replaceAll('-','')}`;
+const args=db=>['exec','-i',container,'psql','-U','postgres','-d',db,'-X','-v','ON_ERROR_STOP=1','-Atq'];
+const run=(sql,db=database)=>execFileSync('docker',args(db),{input:sql,encoding:'utf8',stdio:['pipe','pipe','pipe']}).trim();
+const admin=randomUUID(), own=randomUUID(), other=randomUUID(), pending=randomUUID();
+const auth=(user,sql)=>`set role authenticated;set request.jwt.claim.sub='${user}';${sql}`;
+const sqlJson=value=>`'${JSON.stringify(value).replaceAll("'","''")}'::jsonb`;
+const commandSql=(operation,payload,version=null,id=randomUUID())=>`select public.app_command('${id}','${operation}',${sqlJson(payload)},${version??'null'});`;
+const command=(operation,payload,version=null,user=admin,id)=>JSON.parse(run(auth(user,commandSql(operation,payload,version,id))));
+const snapshot=user=>JSON.parse(run(auth(user,'select public.app_snapshot();')));
+const fails=(call,code)=>assert.throws(call,e=>e.stderr?.toString().includes(code),code);
+const itemBase={kind:'product',unit:'kg',price:'100.25',minimum:'0',active:true,package_size:'0.5'};
+let created=false;
+try {
+ run(`create database ${database};`,'postgres');created=true;
+ run(`create schema extensions;create schema auth;create table auth.users(id uuid primary key,email text,raw_user_meta_data jsonb default '{}');create function auth.uid() returns uuid language sql stable as $$select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid$$;create publication supabase_realtime;`);
+ const migrations=readdirSync('supabase/migrations').filter(x=>x.endsWith('.sql')).sort();
+ const latest=migrations.find(x=>x.includes('kalak_identity_sales'));assert.ok(latest);
+ for(const migration of migrations.slice(0,migrations.indexOf(latest)))run(`begin;${readFileSync(`supabase/migrations/${migration}`,'utf8')}commit;`);
+ // Seed the old schema before upgrade to catch table/view type dependencies and historical changes.
+ const historicalProduct=randomUUID(), historicalClient=randomUUID(), historicalOrder=randomUUID();
+ run(`insert into public.items(id,kind,name,unit,price,minimum) values('${historicalProduct}','product','Historical','unidad',3.25,0);insert into public.clients(id,name,phone) values('${historicalClient}','Historical','+54 261 123');insert into public.orders(id,client_id,pickup_date,location_id,payment_method,status,total) values('${historicalOrder}','${historicalClient}',current_date,'salta','efectivo','entregado',6.5);insert into public.order_lines(order_id,product_id,quantity,unit_price,product_name) values('${historicalOrder}','${historicalProduct}',2,3.25,'Historical');insert into public.financial_movements(kind,order_id,amount,method) values('payment','${historicalOrder}',3.25,'efectivo');`);
+ run(`begin;${readFileSync(`supabase/migrations/${latest}`,'utf8')}commit;`);
+ for(const migration of migrations.slice(migrations.indexOf(latest)+1))run(`begin;${readFileSync(`supabase/migrations/${migration}`,'utf8')}commit;`);
+ // Hosted Supabase does not let project postgres delegate auth schema USAGE.
+ // Assert real operations work without broad Auth grants or role inheritance.
+ run('revoke usage on schema auth from pedidos_stock_backend;revoke select(id,email,raw_user_meta_data) on auth.users from pedidos_stock_backend;');
+ assert.equal(run("select has_schema_privilege('pedidos_stock_backend','auth','USAGE');"),'f');
+ assert.equal(run(`select quantity::text||':'||unit_price::text from public.order_lines where order_id='${historicalOrder}';`),'2.000000:3.250000');
+ assert.equal(run(`select count(*) from public.financial_movements where order_id='${historicalOrder}';`),'1');
+ assert.equal(run(`select created_at is null from public.clients where id='${historicalClient}';`),'t','unknown historical signup date is not fabricated');
+ run(`insert into auth.users(id,email) values('${admin}','admin@test.invalid'),('${own}','own@test.invalid'),('${other}','other@test.invalid'),('${pending}','pending@test.invalid');`);
+ fails(()=>run('set role anon;select public.app_snapshot();'),'permission denied');
+ fails(()=>run('set role anon;select * from public.orders;'),'permission denied');
+ fails(()=>snapshot(pending),'FORBIDDEN');
+ run(`set role service_role;select public.app_bootstrap_admin('${admin}','Admin');`);
+ fails(()=>run(`set role service_role;select public.app_bootstrap_admin('${pending}','Again');`),'administrador inicial');
+ const assign=(id,location)=>run(auth(admin,`select public.app_set_member('${id}','responsable','${location}','Responsable',true);`));
+ assign(own,'mendieta');assign(other,'salta');
+ assert.equal(snapshot(admin).members.find(x=>x.id===pending).role,null);
+ assert.equal(snapshot(admin).members.find(x=>x.id===pending).email,'pending@test.invalid');
+ assert.equal(snapshot(own).profile.location_id,'mendieta');
+ fails(()=>run(auth(own,`select public.app_set_member('${pending}','admin',null,'Bad',true);`)),'FORBIDDEN');
+ fails(()=>run(auth(own,'select * from public.orders;')),'permission denied');
+ const unrelatedClient=command('save_client',{name:'Private other point client',phone:'261000000000'}).id;
+ const today=run("select (now() at time zone 'America/Argentina/Mendoza')::date::text;"),future=run("select ((now() at time zone 'America/Argentina/Mendoza')::date+10)::text;");
+ const product=command('save_item',{...itemBase,name:'Kg product'}).id;
+ const unitProduct=command('save_item',{...itemBase,name:'Unit product',unit:'unidad',price:'1',package_size:null}).id;
+ fails(()=>command('save_item',{...itemBase,name:'Forbidden'},null,own),'FORBIDDEN');
+ const client=command('save_client',{name:'Cliente',phone:'+54 (261) 444-1234'},null,own).id;
+ assert.ok(snapshot(own).clients.find(x=>x.id===client).created_at);
+ fails(()=>command('save_client',{name:'Duplicate',phone:'54 261 4441234'}),'DUPLICATE_PHONE');
+ command('adjust_stock',{item_id:product,location_id:'mendieta',quantity:'10.5',reason:'Opening'});
+ const orderPayload={client_id:client,pickup_date:future,location_id:'mendieta',payment_method:'efectivo',sale_kind:'pedido',payment_status:'no_pagado',lines:[{product_id:product,quantity:'8'}]};
+ fails(()=>command('save_order',{...orderPayload,client_id:unrelatedClient},null,own),'FORBIDDEN');
+ const futureOrder=command('save_order',orderPayload,null,own).id;
+ const immediate={...orderPayload,client_id:null,pickup_date:'2000-01-01',sale_kind:'espontanea',lines:[{product_id:product,quantity:'3'}]};
+ fails(()=>command('save_order',immediate,null,own),'INSUFFICIENT_STOCK');
+ const saleCommand=randomUUID(),sale=command('save_order',{...immediate,lines:[{product_id:product,quantity:'2.5'}]},null,own,saleCommand).id;
+ command('save_order',{...immediate,lines:[{product_id:product,quantity:'2.5'}]},null,own,saleCommand);
+ let state=snapshot(own), saved=state.orders.find(x=>x.id===sale);
+ assert.equal(saved.pickup_date,today);assert.equal(saved.status,'entregado');assert.equal(saved.client_id,null);assert.equal(Number(saved.lines[0].reserved),0);assert.equal(saved.delivered_by,own);
+ assert.equal(state.movements.filter(x=>x.event_id===sale).length,1);
+ assert.equal(Number(state.stock.find(x=>x.item_id===product&&x.location_id==='mendieta').on_hand),8);
+ fails(()=>command('save_order',{...orderPayload,pickup_date:today,lines:[{product_id:product,quantity:'1.25'}]},null,own),'STOCK_CONFIRMATION_REQUIRED');
+ assert.equal(snapshot(own).orders.length,2,'failed save rolls back all rows');
+ const shortage=command('save_order',{...orderPayload,pickup_date:today,allow_stock_shortage:true,lines:[{product_id:product,quantity:'1.25'}]},null,own).id;
+ fails(()=>command('save_order',{...immediate,allow_stock_shortage:true,lines:[{product_id:product,quantity:'0.1'}]},null,own),'INSUFFICIENT_STOCK');
+ fails(()=>command('save_order',{...orderPayload,lines:[{product_id:unitProduct,quantity:'1.2'}]},null,own),'entera');
+ fails(()=>command('deliver_order',{id:futureOrder},1,other),'FORBIDDEN');
+ assert.equal(snapshot(other).orders.some(x=>x.id===futureOrder),false);
+ assert.equal(snapshot(other).clients.some(x=>x.id===client),false);
+ assert.equal(Number(snapshot(own).orders.find(x=>x.id===futureOrder).lines[0].reserved),8,'confirmed shortage does not steal prior future reservation');
+ assert.equal(Number(snapshot(own).orders.find(x=>x.id===shortage).lines[0].shortage),1.25);
+ command('adjust_stock',{item_id:product,location_id:'mendieta',quantity:'1.25',reason:'Cover confirmed shortage'});
+ assert.equal(snapshot(own).orders.find(x=>x.id===shortage).stock_shortage_confirmed,false,'fulfilled shortage no longer has lowered priority');
+ command('deliver_order',{id:shortage,payment_status:'no_pagado'},1,own);
+ saved=snapshot(own).orders.find(x=>x.id===shortage);assert.equal(saved.status,'entregado');assert.equal(saved.payment_confirmed_at,null);
+ fails(()=>command('record_payment',{order_id:shortage,amount:'1',method:'efectivo'},saved.version,own),'parciales');
+ command('record_payment',{order_id:shortage,amount:saved.total,method:'efectivo'},saved.version,own);
+ saved=snapshot(own).orders.find(x=>x.id===shortage);assert.ok(saved.payment_confirmed_at);assert.equal(saved.payment_confirmed_by,own);
+ fails(()=>command('save_order',{...orderPayload,id:shortage},saved.version,own),'INSUFFICIENT_STOCK');
+ fails(()=>command('cancel_order',{id:shortage},saved.version,own),'pedido cerrado');
+ // A price change never rewrites existing sale line prices, and future prices do not leak early.
+ let item=snapshot(admin).items.find(x=>x.id===product);
+ command('save_item',{...itemBase,id:product,name:item.name,price:'200',price_effective_on:future},item.version);
+ assert.equal(Number(snapshot(admin).items.find(x=>x.id===product).price),100.25);
+ item=snapshot(admin).items.find(x=>x.id===product);
+ command('save_item',{...itemBase,id:product,name:item.name,price:'110',price_effective_on:today},item.version);
+ assert.equal(Number(snapshot(own).orders.find(x=>x.id===futureOrder).lines[0].unit_price),100.25);
+ assert.equal(Number(snapshot(own).orders.find(x=>x.id===futureOrder).lines[0].product_package_size),0.5);
+ assert.ok(snapshot(admin).product_prices.filter(x=>x.product_id===product).length>=3);
+ assert.equal(snapshot(admin).audit_events.filter(x=>x.operation==='save_order').every(x=>[own,admin].includes(x.actor_id)),true);
+ assert.equal(snapshot(admin).financial_movements.filter(x=>x.order_id===shortage).every(x=>x.actor_id===own),true);
+ fails(()=>run(auth(own,'select public.app_export();')),'FORBIDDEN');
+ const backup=JSON.parse(run(auth(admin,'select public.app_export();')));assert.ok(backup.raw_tables.product_prices.length);assert.ok(backup.raw_tables.app_members.length);
+ // Existing legacy partial receipts may retain their unchanged-total document edits.
+ const partialOrder=randomUUID();run(`insert into public.orders(id,client_id,pickup_date,location_id,payment_method,total,created_by) values('${partialOrder}','${client}','${future}','mendieta','efectivo',200.5,'${own}');insert into public.order_lines(order_id,product_id,quantity,unit_price,product_name,product_unit) values('${partialOrder}','${product}',2,100.25,'Kg product','kg');insert into public.financial_movements(kind,order_id,amount,method) values('payment','${partialOrder}',20,'efectivo');`);
+ command('save_order',{...orderPayload,id:partialOrder,notes:'Legacy partial unchanged',payment_status:'no_pagado',lines:[{product_id:product,quantity:'2'}]},1,own);
+ assert.equal(run(`select sum(amount)::text from public.financial_movements where order_id='${partialOrder}';`),'20.00');
+ command('save_order',{...orderPayload,id:partialOrder,allow_stock_shortage:true,lines:[{product_id:product,quantity:'3'}]},2,own);
+ assert.equal(run(`select sum(amount)::text from public.financial_movements where order_id='${partialOrder}';`),'20.00');
+ // Increasing a paid pending order reopens a binary pending balance without new partial receipts.
+ const paidPayload={...orderPayload,allow_stock_shortage:true,payment_status:'pagado',lines:[{product_id:unitProduct,quantity:'100'}]};
+ const paidEdit=command('save_order',paidPayload,null,own).id;
+ const {payment_status:ignoredPaid,...editWithoutPayment}=paidPayload;
+ command('save_order',{...editWithoutPayment,id:paidEdit,lines:[{product_id:unitProduct,quantity:'150'}]},1,own);
+ let reopened=snapshot(own).orders.find(x=>x.id===paidEdit);assert.equal(Number(reopened.total),150);assert.equal(reopened.payment_confirmed_at,null);assert.equal(snapshot(own).financial_movements.filter(x=>x.order_id===paidEdit).length,1);
+ fails(()=>command('record_payment',{order_id:paidEdit,amount:'20',method:'efectivo'},2,own),'parciales');
+ command('record_payment',{order_id:paidEdit,amount:'50',method:'efectivo'},2,own);
+ assert.equal(snapshot(own).financial_movements.filter(x=>x.order_id===paidEdit).reduce((sum,x)=>sum+Number(x.amount),0),150);
+ assert.ok(snapshot(own).orders.find(x=>x.id===paidEdit).payment_confirmed_at);
+ // Explicit reschedule override protects prior promises and becomes normal priority once fully supplied.
+ const rescheduleProduct=command('save_item',{...itemBase,name:'Reschedule promise',unit:'unidad',price:'1'}).id;
+ command('adjust_stock',{item_id:rescheduleProduct,location_id:'mendieta',quantity:'5',reason:'Five promised'});
+ const promise=command('save_order',{...orderPayload,lines:[{product_id:rescheduleProduct,quantity:'5'}]},null,own).id;
+ const later=run(`select '${future}'::date+1;`);
+ const moved=command('save_order',{...orderPayload,pickup_date:later,allow_stock_shortage:true,lines:[{product_id:rescheduleProduct,quantity:'1'}]},null,own).id;
+ fails(()=>command('reschedule_order',{id:moved,pickup_date:today},1,own),'STOCK_CONFIRMATION_REQUIRED');
+ fails(()=>command('reschedule_order',{id:moved,pickup_date:today,allow_stock_shortage:'yes'},1,own),'confirmación de stock inválida');
+ command('reschedule_order',{id:moved,pickup_date:today,allow_stock_shortage:true},1,own);
+ let promises=snapshot(own);assert.equal(Number(promises.orders.find(x=>x.id===promise).lines[0].reserved),5);assert.equal(Number(promises.orders.find(x=>x.id===moved).lines[0].shortage),1);
+ fails(()=>command('save_order',{...immediate,allow_stock_shortage:true,lines:[{product_id:rescheduleProduct,quantity:'1'}]},null,own),'INSUFFICIENT_STOCK');
+ command('adjust_stock',{item_id:rescheduleProduct,location_id:'mendieta',quantity:'1',reason:'Cover postponed shortage'});
+ promises=snapshot(own);assert.equal(Number(promises.orders.find(x=>x.id===promise).lines[0].reserved),5);assert.equal(Number(promises.orders.find(x=>x.id===moved).lines[0].reserved),1);assert.equal(promises.orders.find(x=>x.id===moved).stock_shortage_confirmed,false);
+ const paymentHistory=snapshot(own).audit_events.find(x=>x.operation==='record_payment'&&x.after_data?.order_id===paidEdit);assert.equal(paymentHistory.before_data.payment_status,'no_pagado');assert.equal(paymentHistory.after_data.payment_status,'pagado');
+ // Parallel retry uses separate database connections and the shared advisory transaction lock.
+ const concurrencyId=randomUUID(),sql=auth(own,commandSql('cancel_order',{id:futureOrder},1,concurrencyId));
+ const concurrent=()=>new Promise((resolve,reject)=>{const process=execFile('docker',args(database),{encoding:'utf8'},(err,stdout,stderr)=>err?reject(Object.assign(err,{stderr})):resolve(stdout.trim()));process.stdin.end(sql);});
+ const results=await Promise.all([concurrent(),concurrent()]);assert.equal(results[0],results[1]);
+ assert.equal(run(`select count(*) from public.audit_events where command_id='${concurrencyId}';`),'1');
+ fails(()=>command('cancel_order',{id:futureOrder},1,admin,concurrencyId),'FORBIDDEN');
+ // Independent same-day writers cannot both promise the last available commercial unit.
+ const raceProduct=command('save_item',{...itemBase,name:'Reservation race',unit:'unidad',price:'1'}).id;
+ command('adjust_stock',{item_id:raceProduct,location_id:'mendieta',quantity:'1',reason:'Race stock'});
+ const concurrentSql=source=>new Promise((resolve,reject)=>{const child=execFile('docker',args(database),{encoding:'utf8'},(err,stdout,stderr)=>err?reject(Object.assign(err,{stderr})):resolve(stdout.trim()));child.stdin.end(source);});
+ const racePayload={...orderPayload,pickup_date:today,lines:[{product_id:raceProduct,quantity:'1'}]};
+ const racing=await Promise.allSettled([concurrentSql(auth(own,commandSql('save_order',racePayload))),concurrentSql(auth(own,commandSql('save_order',racePayload)))]);
+ assert.equal(racing.filter(x=>x.status==='fulfilled').length,1);assert.ok(racing.find(x=>x.status==='rejected').reason.stderr.includes('STOCK_CONFIRMATION_REQUIRED'));
+ const raceOrder=snapshot(own).orders.find(o=>o.lines.some(l=>l.product_id===raceProduct));
+ // A competing spontaneous sale cannot steal the stock from a scheduled delivery.
+ const competingSale={...immediate,payment_status:'no_pagado',lines:[{product_id:raceProduct,quantity:'1'}]};
+ const deliveryId=randomUUID(),deliverySql=auth(own,commandSql('deliver_order',{id:raceOrder.id,payment_status:'no_pagado'},raceOrder.version,deliveryId));
+ const competition=await Promise.allSettled([concurrentSql(auth(own,commandSql('save_order',competingSale))),concurrentSql(deliverySql),concurrentSql(deliverySql)]);
+ assert.equal(competition[0].status,'rejected');assert.ok(competition[0].reason.stderr.includes('INSUFFICIENT_STOCK'));assert.equal(competition[1].status,'fulfilled');assert.equal(competition[2].status,'fulfilled');assert.equal(competition[1].value,competition[2].value);
+ state=snapshot(own);assert.equal(state.movements.filter(m=>m.event_id===raceOrder.id&&m.kind==='delivery').length,1);assert.equal(Number(state.stock.find(x=>x.item_id===raceProduct&&x.location_id==='mendieta').on_hand),0);
+ const phoneRace=await Promise.allSettled([concurrentSql(auth(own,commandSql('save_client',{name:'Phone race A',phone:'+54 261 998877'}))),concurrentSql(auth(own,commandSql('save_client',{name:'Phone race B',phone:'54261998877'})))]);
+ assert.equal(phoneRace.filter(x=>x.status==='fulfilled').length,1);assert.ok(phoneRace.find(x=>x.status==='rejected').reason.stderr.includes('DUPLICATE_PHONE'));
+ // One shared future unit cannot be promised concurrently at different pickup points.
+ const planRaceProduct=command('save_item',{...itemBase,name:'Shared future reservation race',unit:'unidad',price:'1'}).id;
+ command('save_production_plan',{product_id:planRaceProduct,quantity:'1',available_on:future});
+ const futureRace=point=>({...orderPayload,location_id:point,lines:[{product_id:planRaceProduct,quantity:'1'}]});
+ const planRacing=await Promise.allSettled([concurrentSql(auth(admin,commandSql('save_order',futureRace('mendieta')))),concurrentSql(auth(admin,commandSql('save_order',futureRace('salta'))))]);
+ assert.equal(planRacing.filter(x=>x.status==='fulfilled').length,1,'only one point may commit the last future unit');assert.ok(planRacing.find(x=>x.status==='rejected').reason.stderr.includes('STOCK_CONFIRMATION_REQUIRED'));
+ assert.equal(snapshot(admin).orders.filter(o=>o.lines.some(l=>l.product_id===planRaceProduct)).length,1);
+ // Appending and deleting are each idempotent even with concurrent retries.
+ const appendProduct=command('save_item',{...itemBase,name:'Append retry product',unit:'unidad',price:'7'}).id;
+ command('adjust_stock',{item_id:appendProduct,location_id:'mendieta',quantity:'3',reason:'Retry fixture'});
+ const appendOrder=command('save_order',{...orderPayload,pickup_date:today,lines:[{product_id:appendProduct,quantity:'1'}]}).id;
+ const appendId=randomUUID(),appendSql=auth(admin,commandSql('append_spontaneous_sale',{id:appendOrder,lines:[{product_id:appendProduct,quantity:'1'}],method:'efectivo',payment_status:'pagado',deliver:true},1,appendId));
+ const appends=await Promise.all([concurrentSql(appendSql),concurrentSql(appendSql)]);assert.equal(appends[0],appends[1]);
+ let appended=snapshot(admin).orders.find(o=>o.id===appendOrder);assert.equal(Number(appended.lines[0].quantity),2);assert.equal(Number(appended.total),14);assert.equal(snapshot(admin).financial_movements.filter(f=>f.order_id===appendOrder).length,1);
+ const deleteId=randomUUID(),deleteSql=auth(admin,commandSql('delete_order',{id:appendOrder},appended.version,deleteId));
+ const deletes=await Promise.all([concurrentSql(deleteSql),concurrentSql(deleteSql)]);assert.equal(deletes[0],deletes[1]);
+ const afterDelete=snapshot(admin);assert.equal(afterDelete.orders.some(o=>o.id===appendOrder),false);assert.equal(Number(afterDelete.stock.find(b=>b.item_id===appendProduct&&b.location_id==='mendieta').on_hand),3);assert.equal(afterDelete.financial_movements.filter(f=>f.order_id===appendOrder).reduce((sum,f)=>sum+Number(f.amount),0),0);
+ // Global first-purchase claims serialize even when competing pickup points cannot see each other's orders.
+ const giftBag=command('save_item',{...itemBase,name:'Gift race bag',unit:'unidad',price:'5',first_purchase_gift_eligible:true}).id;
+ const giftFood=command('save_item',{...itemBase,name:'Gift race food',unit:'unidad',price:'10'}).id;
+ for(const point of ['mendieta','salta'])for(const id of [giftBag,giftFood])command('adjust_stock',{item_id:id,location_id:point,quantity:'20',reason:'Gift race inventory'});
+ const giftClient=command('save_client',{name:'Global gift race buyer'},null,own).id;
+ const giftPayload=point=>({client_id:giftClient,pickup_date:today,location_id:point,payment_method:'efectivo',lines:[{product_id:giftFood,quantity:'2'},{product_id:giftBag,quantity:'3',is_gift:true}]});
+ const giftRacing=await Promise.allSettled(['mendieta','salta'].map(point=>concurrentSql(auth(admin,commandSql('save_order',giftPayload(point))))));
+ assert.equal(giftRacing.filter(x=>x.status==='fulfilled').length,1,'only one gift order globally');assert.match(giftRacing.find(x=>x.status==='rejected').reason.stderr,/FIRST_PURCHASE_GIFT_NOT_ELIGIBLE/);
+ let gifted=snapshot(admin).orders.find(o=>o.client_id===giftClient);
+ const giftedId=gifted.id;command('deliver_order',{id:giftedId,payment_status:'pagado'},gifted.version);
+ gifted=snapshot(admin).orders.find(o=>o.id===giftedId);
+ const editCommand=randomUUID(),editPayload={...giftPayload(gifted.location_id),id:giftedId,lines:[{product_id:giftFood,quantity:'1'},{product_id:giftBag,quantity:'4',is_gift:true}]};
+ const editSql=auth(admin,commandSql('save_order',editPayload,gifted.version,editCommand));
+ const editRetries=await Promise.all([concurrentSql(editSql),concurrentSql(editSql)]);assert.equal(editRetries[0],editRetries[1]);
+ const editedGift=snapshot(admin);gifted=editedGift.orders.find(o=>o.id===giftedId);
+ assert.equal(Number(gifted.total),10);assert.equal(editedGift.financial_movements.filter(f=>f.order_id===giftedId&&f.kind==='refund').length,1,'delivered edit retries refund exactly once');
+ assert.equal(editedGift.movements.filter(m=>m.event_id===giftedId&&m.kind==='delivery_edit').length,2,'one food restoration and one gift bag deduction');
+ assert.equal(Number(editedGift.stock.find(x=>x.item_id===giftFood&&x.location_id===gifted.location_id).on_hand),19);assert.equal(Number(editedGift.stock.find(x=>x.item_id===giftBag&&x.location_id===gifted.location_id).on_hand),16);
+ const staleEdits=await Promise.allSettled([concurrentSql(auth(admin,commandSql('save_order',{...editPayload,notes:'A'},gifted.version))),concurrentSql(auth(admin,commandSql('save_order',{...editPayload,notes:'B'},gifted.version)))]);
+ assert.equal(staleEdits.filter(x=>x.status==='fulfilled').length,1);assert.match(staleEdits.find(x=>x.status==='rejected').reason.stderr,/VERSION_CONFLICT/);
+ console.log('PASS: global cross-point gift race, delivered quantity/gift stock deltas, single compensating refund under simultaneous retries, and stale delivered edit conflict.');
+ assert.equal(run(`select sum(amount)::text from public.financial_movements where order_id='${historicalOrder}';`),'3.25','historical partial receipt untouched');
+ console.log('PASS: isolated additive upgrade preserves history; auth/RPC boundaries, pending approvals, scoped data, normalized clients, fractional kg, package/price snapshots, immediate stock, all reservations, explicit shortage override, independent full payment, audited editable delivered sales, actor audit, concurrent idempotent delivery, shortage/reservation races and phone races.');
+ // Also prove empty fresh installs using exactly the migration list (the upgrade above seeded old data).
+ const fresh=`${database}_fresh`;run(`create database ${fresh};`,'postgres');
+ try{run(`create schema extensions;create schema auth;create table auth.users(id uuid primary key,email text,raw_user_meta_data jsonb default '{}');create function auth.uid() returns uuid language sql stable as $$select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid$$;create publication supabase_realtime;`,fresh);for(const migration of migrations)run(`begin;${readFileSync(`supabase/migrations/${migration}`,'utf8')}commit;`,fresh);assert.equal(run('select count(*) from public.app_members;',fresh),'0');console.log('PASS: clean fresh install of all migrations.');
+ for(const suite of readdirSync('supabase/tests/database').filter(x=>x.endsWith('.sql')).sort()){
+ const output=run(readFileSync('supabase/tests/database/'+suite,'utf8'),fresh);assert.doesNotMatch(output,/^not ok /m,suite);const plan=output.match(/^1\.\.(\d+)/m);assert.ok(plan,'pgTAP plan '+suite);assert.equal([...output.matchAll(/^ok \d+/gm)].length,Number(plan[1]),'all pgTAP assertions '+suite);console.log(`PASS: ${suite} (${plan[1]} assertions${Number(plan[1])===0?' — explicit superseded contract skip':''})`);
+ }}finally{run(`drop database ${fresh};`,'postgres');}
+} catch(error){console.error(error.stderr?.toString()||error.message);throw error;} finally {if(created)run(`drop database ${database};`,'postgres');}

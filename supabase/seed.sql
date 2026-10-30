@@ -1,0 +1,2 @@
+-- Business bootstrap is idempotent in the additive migrations: locations and seven supplemental products.
+-- Deliberately no sample orders, clients or inventory quantities.
