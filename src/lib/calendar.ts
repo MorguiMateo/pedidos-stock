@@ -53,7 +53,12 @@ export function dailyProductSummary(data: Pick<Snapshot, 'orders' | 'items' | 'l
   }).sort((a, b) => (positions.get(a.location_id) ?? data.locations.length) - (positions.get(b.location_id) ?? data.locations.length) || a.name.localeCompare(b.name));
   return { count: orders.length, products: summarize(orders), byLocation };
 }
-/** Preserve the day's order sort within each pickup, including archived locations. */
+const isOutstanding = (order: Order) => order.status === 'pendiente_entrega' && !order.returned_at;
+/** Outstanding orders first; delivered and closed ones follow. Stable inside each block. */
+export function pendingFirst<T extends Order>(orders: readonly T[]): T[] {
+  return [...orders.filter(isOutstanding), ...orders.filter(order => !isOutstanding(order))];
+}
+/** Preserve the day's order sort within each pickup (pending first), including archived locations. */
 export function groupOrdersByPickup(orders: Order[], locations: Location[], items: Item[] = []) {
   type PendingProduct = { product_id: string; name: string; unit: string; quantity: string };
   type PickupGroup = { location_id: string; name: string; color: string; orders: Order[]; pendingCount: number; total: string; pendingProducts: Map<string, PendingProduct> };
@@ -80,7 +85,7 @@ export function groupOrdersByPickup(orders: Order[], locations: Location[], item
   }
   const positions = new Map(locations.map((point, index) => [point.id, index]));
   return [...groups.values()].sort((a, b) => (positions.get(a.location_id) ?? locations.length) - (positions.get(b.location_id) ?? locations.length) || a.name.localeCompare(b.name))
-    .map(group => ({ ...group, pendingProducts: [...group.pendingProducts.values()] }));
+    .map(group => ({ ...group, orders: pendingFirst(group.orders), pendingProducts: [...group.pendingProducts.values()] }));
 }
 export function linePrice(productId: string, products: Item[], original?: Order) {
   const historical = original?.lines.find(line => line.product_id === productId);

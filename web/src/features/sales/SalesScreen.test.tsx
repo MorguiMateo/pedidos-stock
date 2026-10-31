@@ -20,8 +20,9 @@ const fixture = (): Snapshot => ({
 const order = (overrides: Partial<Order> = {}): Order => ({ id: 'pedido', client_id: 'ana', pickup_date: today(), location_id: 'punto', payment_method: 'efectivo', status: 'pendiente_entrega', notes: '', total: '100', version: 7, allocation_version: 2, created_at: new Date().toISOString(), delivered_at: null, packages: 1, prepared_packages: 1, lines: [{ id: 'linea', product_id: 'comida', quantity: '1', unit_price: '100', product_name: 'Menú histórico', product_unit: 'kg', product_package_size: '0.5', reserved: '1', shortage: '0' }], ...overrides });
 function dialog() { return screen.getByRole('dialog'); }
 beforeAll(() => { HTMLDialogElement.prototype.showModal = function () { this.setAttribute('open', ''); }; HTMLDialogElement.prototype.close = function () { this.removeAttribute('open'); }; });
-beforeEach(() => { state.data = fixture(); state.command.mockReset().mockResolvedValue({ id: 'new-order', affected_order_ids: [] }); state.isOnline = true; });
-afterEach(cleanup);
+// Pinned to a weekday: weekend pickup rules would otherwise make these tests depend on the day they run.
+beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-10-28T15:00:00Z')); state.data = fixture(); state.command.mockReset().mockResolvedValue({ id: 'new-order', affected_order_ids: [] }); state.isOnline = true; });
+afterEach(() => { cleanup(); vi.useRealTimers(); });
 
 describe('Sales native workflow parity', () => {
   it('lists pending product totals on separate header rows, independent of payment, preserving order amounts and filter scope', async () => {
@@ -112,7 +113,7 @@ describe('Sales native workflow parity', () => {
   });
   it('creates a real multi-product first-purchase order with normalized commercial quantities and explicit gift flags', async () => {
     const user = userEvent.setup(); render(<SalesScreen/>); await user.click(screen.getByRole('button', { name: 'Nuevo pedido' }));
-    await user.selectOptions(within(dialog()).getByLabelText('Cliente'), 'ana');
+    await user.type(within(dialog()).getByLabelText('Buscar cliente por nombre o teléfono'), 'Ana'); await user.selectOptions(within(dialog()).getByLabelText('Cliente'), 'ana');
     await user.click(within(dialog()).getByRole('button', { name: 'Menú natural' }));
     await user.clear(within(dialog()).getByLabelText('Cantidad de Menú natural (kg)')); await user.type(within(dialog()).getByLabelText('Cantidad de Menú natural (kg)'), '1,5');
     await user.click(within(dialog()).getByRole('button', { name: 'Bolsa reutilizable' })); await user.click(within(dialog()).getByLabelText('Bolsa gratis · primera compra'));
@@ -121,7 +122,7 @@ describe('Sales native workflow parity', () => {
   });
   it('requires explicit shortage confirmation after server rejection and retains the draft', async () => {
     state.command.mockRejectedValueOnce(new Error('STOCK_CONFIRMATION_REQUIRED')).mockResolvedValue({ id: 'new-order', affected_order_ids: [] });
-    const user = userEvent.setup(); render(<SalesScreen/>); await user.click(screen.getByRole('button', { name: 'Nuevo pedido' })); await user.selectOptions(within(dialog()).getByLabelText('Cliente'), 'ana'); await user.click(within(dialog()).getByRole('button', { name: 'Menú natural' })); await user.click(within(dialog()).getByRole('button', { name: 'Guardar pedido' }));
+    const user = userEvent.setup(); render(<SalesScreen/>); await user.click(screen.getByRole('button', { name: 'Nuevo pedido' })); await user.type(within(dialog()).getByLabelText('Buscar cliente por nombre o teléfono'), 'Ana'); await user.selectOptions(within(dialog()).getByLabelText('Cliente'), 'ana'); await user.click(within(dialog()).getByRole('button', { name: 'Menú natural' })); await user.click(within(dialog()).getByRole('button', { name: 'Guardar pedido' }));
     await user.click(await screen.findByRole('button', { name: 'Agendar con faltantes' }));
     await waitFor(() => expect(state.command).toHaveBeenLastCalledWith('save_order', expect.objectContaining({ allow_stock_shortage: true, client_id: 'ana', lines: [{ product_id: 'comida', quantity: '1', is_gift: false }] }), undefined));
     expect(state.command).toHaveBeenCalledTimes(2);
@@ -138,7 +139,7 @@ describe('Sales native workflow parity', () => {
   });
   it('appends a spontaneous sale atomically to an existing pending order and retains payment metadata', async () => {
     state.data!.orders = [order()]; const user = userEvent.setup(); render(<SalesScreen/>); await user.click(screen.getByRole('button', { name: 'Venta espontánea' }));
-    await user.selectOptions(within(dialog()).getByLabelText('Cliente (opcional)'), 'ana'); await user.selectOptions(within(dialog()).getByLabelText('Cómo registrar la venta'), 'pedido'); await user.click(within(dialog()).getByRole('button', { name: 'Menú natural' }));
+    await user.type(within(dialog()).getByLabelText('Buscar cliente por nombre o teléfono'), 'Ana'); await user.selectOptions(within(dialog()).getByLabelText('Cliente (opcional)'), 'ana'); await user.selectOptions(within(dialog()).getByLabelText('Cómo registrar la venta'), 'pedido'); await user.click(within(dialog()).getByRole('button', { name: 'Menú natural' }));
     await user.selectOptions(within(dialog()).getByLabelText('Estado de pago'), 'pagado'); await user.selectOptions(within(dialog()).getByLabelText('Cómo se recibió el pago'), 'transferencia'); await user.type(within(dialog()).getByLabelText('Nombre de quien transfiere (opcional)'), 'María Pérez'); await user.click(within(dialog()).getByRole('button', { name: 'Registrar y entregar' }));
     await waitFor(() => expect(state.command).toHaveBeenCalledWith('append_spontaneous_sale', { id: 'pedido', lines: [{ product_id: 'comida', quantity: '1', is_gift: false }], payment_status: 'pagado', method: 'transferencia', transfer_name: 'María Pérez', deliver: true }, 7));
   });
@@ -155,7 +156,7 @@ describe('Sales native workflow parity', () => {
     const user = userEvent.setup(); render(<SalesScreen/>);
     expect(screen.queryByRole('button', { name: /Ana Pérez/ })).toBeNull();
     await user.click(screen.getByRole('button', { name: 'Venta espontánea' }));
-    await user.selectOptions(within(dialog()).getByLabelText('Cliente (opcional)'), 'ana');
+    await user.type(within(dialog()).getByLabelText('Buscar cliente por nombre o teléfono'), 'Ana'); await user.selectOptions(within(dialog()).getByLabelText('Cliente (opcional)'), 'ana');
     await user.selectOptions(within(dialog()).getByLabelText('Cómo registrar la venta'), 'pedido');
     await user.click(within(dialog()).getByRole('button', { name: 'Menú natural' }));
     await user.click(within(dialog()).getByRole('button', { name: 'Registrar y entregar' }));
@@ -241,7 +242,7 @@ describe('compact order actions and new order shortcuts', () => {
     const user = userEvent.setup(); render(<SalesScreen/>);
     await user.click(screen.getByRole('button', { name: 'Nuevo pedido' }));
     expect((within(dialog()).getByLabelText('Punto de retiro') as HTMLSelectElement).value).toBe('mendieta');
-    await user.selectOptions(within(dialog()).getByLabelText('Cliente'), 'ana');
+    await user.type(within(dialog()).getByLabelText('Buscar cliente por nombre o teléfono'), 'Ana'); await user.selectOptions(within(dialog()).getByLabelText('Cliente'), 'ana');
     expect((within(dialog()).getByLabelText('Punto de retiro') as HTMLSelectElement).value).toBe('punto');
     await user.click(within(dialog()).getByRole('button', { name: 'Repetir último pedido' }));
     expect((within(dialog()).getByLabelText('Punto de retiro') as HTMLSelectElement).value).toBe('mendieta');
@@ -271,5 +272,133 @@ describe('compact order actions and new order shortcuts', () => {
     const panel = heading.closest('section')!;
     expect(within(panel).getByRole('button', { name: 'Cambiar día de retiro' })).toBeTruthy();
     expect(within(panel).getByRole('button', { name: 'Cancelar pedido' })).toBeTruthy();
+  });
+});
+
+
+describe('focused new order form', () => {
+  it('offers clients only after a nonblank name or normalized phone search and keeps full registration', async () => {
+    state.data!.clients.push({ id: 'bruno', name: 'Bruno López', phone: '+54 (261) 555-9000', version: 1 });
+    const user = userEvent.setup(); render(<SalesScreen/>);
+    await user.click(screen.getByRole('button', { name: 'Nuevo pedido' }));
+    const options = () => within(within(dialog()).getByLabelText('Cliente')).getAllByRole('option').map(option => option.textContent);
+    expect(options()).toEqual(['Elegí un cliente']);
+    expect(within(dialog()).getByRole('button', { name: 'Nuevo cliente · formulario completo' })).toBeTruthy();
+    expect(within(dialog()).queryByLabelText('Bultos / paquetes totales')).toBeNull();
+    expect(within(dialog()).queryByLabelText('Bultos preparados')).toBeNull();
+    const search = within(dialog()).getByLabelText('Buscar cliente por nombre o teléfono');
+    await user.type(search, '   '); expect(options()).toEqual(['Elegí un cliente']);
+    await user.clear(search); await user.type(search, ' pÉrEz ');
+    expect(options()).toEqual(['Elegí un cliente', 'Ana Pérez · 261111111']);
+    await user.clear(search); await user.type(search, '261 555-9');
+    expect(options()).toEqual(['Elegí un cliente', 'Bruno López · +54 (261) 555-9000']);
+    await user.clear(search); await user.type(search, '---'); expect(options()).toEqual(['Elegí un cliente']);
+    await user.clear(search); await user.type(search, 'No existe'); expect(options()).toEqual(['Elegí un cliente']);
+  });
+  it('saves an independent Uber ETA, shows it in details, reopens it, and clears only ETA when Uber is disabled', async () => {
+    state.command.mockImplementation(async (_operation, payload) => {
+      state.data = { ...state.data!, orders: [order({ ...payload, id: 'pedido', version: payload.id ? 9 : 8, total: '200', lines: order().lines })] };
+      return { id: 'pedido', affected_order_ids: ['pedido'] };
+    });
+    const user = userEvent.setup(); render(<SalesScreen/>);
+    await user.click(screen.getByRole('button', { name: 'Nuevo pedido' }));
+    await user.type(within(dialog()).getByLabelText('Buscar cliente por nombre o teléfono'), 'Ana');
+    await user.selectOptions(within(dialog()).getByLabelText('Cliente'), 'ana');
+    await user.click(within(dialog()).getByRole('button', { name: 'Menú natural' }));
+    expect(within(dialog()).queryByLabelText('Llegada aproximada de Uber (opcional)')).toBeNull();
+    await user.click(within(dialog()).getByLabelText('Retira Uber'));
+    fireEvent.change(within(dialog()).getByLabelText('Llegada aproximada de Uber (opcional)'), { target: { value: '17:30' } });
+    fireEvent.change(within(dialog()).getByLabelText('Horario de retiro (opcional)'), { target: { value: '18:00' } });
+    fireEvent.change(within(dialog()).getByLabelText('Indicaciones de preparación / entrega'), { target: { value: 'Tocar timbre\nConservar frío' } });
+    await user.click(within(dialog()).getByRole('button', { name: 'Guardar pedido' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(state.command).toHaveBeenCalledWith('save_order', expect.objectContaining({ uber: true, packages: 1, prepared_packages: 0, pickup_time: '18:00', delivery_notes: 'Tocar timbre\nConservar frío\nLlegada aproximada de Uber: 17:30' }), undefined);
+    await user.click(screen.getByRole('button', { name: /Ana Pérez/, expanded: false }));
+    expect(screen.getByText(/Preparación \/ entrega:.*Tocar timbre/).textContent).not.toContain('Llegada aproximada');
+    expect(screen.getByText(/Retira Uber · llega ~17:30/)).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Editar / preparar' }));
+    expect((within(dialog()).getByLabelText('Llegada aproximada de Uber (opcional)') as HTMLInputElement).value).toBe('17:30');
+    expect((within(dialog()).getByLabelText('Horario de retiro (opcional)') as HTMLInputElement).value).toBe('18:00');
+    expect((within(dialog()).getByLabelText('Indicaciones de preparación / entrega') as HTMLTextAreaElement).value).toBe('Tocar timbre\nConservar frío');
+    expect((within(dialog()).getByLabelText('Bultos / paquetes totales') as HTMLInputElement).value).toBe('1');
+    expect((within(dialog()).getByLabelText('Bultos preparados') as HTMLInputElement).value).toBe('0');
+    fireEvent.change(within(dialog()).getByLabelText('Bultos / paquetes totales'), { target: { value: '3' } });
+    fireEvent.change(within(dialog()).getByLabelText('Bultos preparados'), { target: { value: '2' } });
+    await user.click(within(dialog()).getByLabelText('Retira Uber'));
+    expect(within(dialog()).queryByLabelText('Llegada aproximada de Uber (opcional)')).toBeNull();
+    await user.click(within(dialog()).getByRole('button', { name: 'Guardar cambios' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(state.command).toHaveBeenLastCalledWith('save_order', expect.objectContaining({ uber: false, packages: 3, prepared_packages: 2, pickup_time: '18:00', delivery_notes: 'Tocar timbre\nConservar frío' }), 8);
+    await user.click(screen.getByRole('button', { name: /Ana Pérez/, expanded: false }));
+    await user.click(screen.getByRole('button', { name: 'Editar / preparar' }));
+    await user.click(within(dialog()).getByLabelText('Retira Uber'));
+    expect((within(dialog()).getByLabelText('Llegada aproximada de Uber (opcional)') as HTMLInputElement).value).toBe('');
+  });
+  it('does not inherit Uber arrival or preparation metadata when repeating the last order', async () => {
+    state.data!.orders = [order({ uber: true, packages: 5, prepared_packages: 4, delivery_notes: 'Conservar frío\nLlegada aproximada de Uber: 17:30' })];
+    const user = userEvent.setup(); render(<SalesScreen/>);
+    await user.click(screen.getByRole('button', { name: 'Nuevo pedido' }));
+    await user.type(within(dialog()).getByLabelText('Buscar cliente por nombre o teléfono'), 'Ana');
+    await user.selectOptions(within(dialog()).getByLabelText('Cliente'), 'ana');
+    await user.click(within(dialog()).getByRole('button', { name: 'Repetir último pedido' }));
+    await user.click(within(dialog()).getByLabelText('Retira Uber'));
+    expect((within(dialog()).getByLabelText('Llegada aproximada de Uber (opcional)') as HTMLInputElement).value).toBe('');
+    expect((within(dialog()).getByLabelText('Indicaciones de preparación / entrega') as HTMLTextAreaElement).value).toBe('');
+    await user.click(within(dialog()).getByRole('button', { name: 'Guardar pedido' }));
+    await waitFor(() => expect(state.command).toHaveBeenCalledWith('save_order', expect.objectContaining({ packages: 1, prepared_packages: 0, delivery_notes: '', pickup_time: null }), undefined));
+  });
+});
+
+describe('order status, tones, ordering and client history', () => {
+  const payment = { id: 'paid-in-full', kind: 'payment' as const, order_id: 'entregado-pagado', purchase_id: null, amount: '100', method: 'efectivo' as const, category: '', occurred_on: today(), notes: '', reconciled: false, version: 1, created_at: new Date().toISOString(), reverses_id: null };
+  it('lists pending orders first and tints pending red, delivered green and delivered-unpaid yellow', () => {
+    state.data!.orders = [order({ id: 'entregado-pagado', status: 'entregado' }), order({ id: 'entregado-debe', status: 'entregado' }), order({ id: 'pendiente' })];
+    state.data!.financial_movements = [payment];
+    render(<SalesScreen/>);
+    const cards = [...document.querySelectorAll<HTMLElement>('article[id^="order-"]')];
+    expect(cards.map(card => card.id)).toEqual(['order-pendiente', 'order-entregado-pagado', 'order-entregado-debe']);
+    expect(cards.map(card => card.style.backgroundColor)).toEqual(['rgb(253, 236, 236)', 'rgb(233, 247, 236)', 'rgb(255, 247, 214)']);
+  });
+  it('asks for confirmation before moving a delivered order back to pending or to cancelled', async () => {
+    state.data!.orders = [order({ status: 'entregado' })];
+    const user = userEvent.setup(); render(<SalesScreen/>);
+    await user.click(screen.getByRole('button', { name: /Ana Pérez/, expanded: false }));
+    await user.click(screen.getByRole('button', { name: 'Estado: Pendiente' }));
+    expect(within(dialog()).getByText('¿Estás seguro de que querés cambiar el estado de entregado a pendiente?')).toBeTruthy();
+    await user.click(within(dialog()).getByRole('button', { name: 'No' }));
+    expect(state.command).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: 'Estado: Pendiente' }));
+    await user.click(within(dialog()).getByRole('button', { name: 'Sí' }));
+    await waitFor(() => expect(state.command).toHaveBeenCalledWith('revert_delivery', { id: 'pedido', target: 'pendiente_entrega' }, 7));
+    await user.click(screen.getByRole('button', { name: 'Estado: Cancelado' }));
+    expect(within(dialog()).getByText('¿Estás seguro de que querés cambiar el estado de entregado a cancelado?')).toBeTruthy();
+    await user.click(within(dialog()).getByRole('button', { name: 'Sí' }));
+    await waitFor(() => expect(state.command).toHaveBeenLastCalledWith('revert_delivery', { id: 'pedido', target: 'cancelado' }, 7));
+  });
+  it('registers a spontaneous sale on a past date', async () => {
+    const user = userEvent.setup(); render(<SalesScreen/>);
+    await user.click(screen.getByRole('button', { name: 'Venta espontánea' }));
+    fireEvent.change(within(dialog()).getByLabelText(/Fecha de la venta/), { target: { value: '2026-10-20' } });
+    await user.click(within(dialog()).getByRole('button', { name: 'Menú natural' }));
+    await user.click(within(dialog()).getByRole('button', { name: 'Registrar y entregar' }));
+    await waitFor(() => expect(state.command).toHaveBeenCalledWith('save_order', expect.objectContaining({ sale_kind: 'espontanea', pickup_date: '2026-10-20' }), undefined));
+  });
+  it('moves to the next month only when tapping one of its leading days, and highlights a filtered client with newest-first history', async () => {
+    state.data!.orders = [order({ id: 'viejo', pickup_date: '2026-10-05' }), order({ id: 'nuevo', pickup_date: '2026-10-27', status: 'entregado' }), order({ id: 'otro', client_id: 'bruno', pickup_date: '2026-10-10' })];
+    state.data!.clients.push({ id: 'bruno', name: 'Bruno', version: 1 });
+    const user = userEvent.setup(); render(<SalesScreen/>);
+    expect(screen.getByRole('heading', { name: monthLabel('2026-10'), level: 3 })).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: new RegExp(`^${formatDate('2026-11-01')}\\.`) }));
+    expect(screen.getByRole('heading', { name: monthLabel('2026-11'), level: 3 })).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Hoy' }));
+    await user.click(screen.getByRole('button', { name: 'Filtros' }));
+    await user.selectOptions(screen.getByLabelText('Cliente'), 'ana');
+    const history = screen.getByRole('region', { name: 'Pedidos del cliente' });
+    expect(within(history).getByRole('heading', { name: 'Pedidos de Ana Pérez' })).toBeTruthy();
+    expect([...history.querySelectorAll('article h4')].map(title => title.textContent)).toEqual([expect.stringContaining(formatDate('2026-10-27')), expect.stringContaining(formatDate('2026-10-05'))]);
+    expect(document.querySelector(`button[aria-label^="${formatDate('2026-10-05')}"]`)?.getAttribute('title')).toBe('Día con pedidos del cliente filtrado');
+    expect(document.querySelector(`button[aria-label^="${formatDate('2026-10-10')}"]`)?.getAttribute('title')).toBeNull();
+    await user.click(within(history).getByRole('button', { name: `Ver ${formatDate('2026-10-05')} en el calendario` }));
+    expect(screen.getByRole('heading', { name: formatDate('2026-10-05'), level: 2 })).toBeTruthy();
   });
 });
